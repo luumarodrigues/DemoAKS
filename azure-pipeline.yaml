@@ -1,0 +1,63 @@
+trigger: none
+
+pool:
+  VmImage: ubuntu-latest
+  
+variables:
+
+  imageRepository: 'demodotnet6'
+  containerRegistry: 'labacrtest.azurecr.io'
+  dockerfilePath: '**/Dockerfile'
+  tag: '$(Build.BuildId)'
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Build and push docker image to ACR
+    steps:
+    - task: AzureCLI@2
+      displayName: Build and Push Image
+      inputs:
+        azureSubscription: 'AzureSP'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr build --registry labAcrTest --file Dockerfile --image $(imageRepository):latest -t $(imageRepository):$(tag) .
+    
+    - upload: aks
+      artifact: aks
+    
+    # - task: Docker@2
+    #   displayName: Build and push an image to container registry
+    #   inputs:
+    #     command: buildAndPush
+    #     repository: $(imageRepository)
+    #     dockerfile: $(dockerfilePath)
+    #     containerRegistry: labAcrTest
+    #     tags: |
+    #       $(tag)
+    #       latest
+
+- stage: Deploy
+  displayName: Deploy stage
+  dependsOn: Build
+
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    environment: 'DEV'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: 'deploy'
+              kubernetesServiceConnection: 'AKS'
+              manifests: |
+                $(Pipeline.Workspace)/aks/deployment.yaml
+                $(Pipeline.Workspace)/aks/service.yaml
+              containers: '$(containerRegistry)/$(imageRepository):$(tag)'
